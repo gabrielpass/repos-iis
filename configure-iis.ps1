@@ -53,7 +53,7 @@ New-WebVirtualDirectory -Site $siteName -Name $virtualDir -PhysicalPath $virtual
     </style>
 </head>
 <body>
-    <h1>Bem Vindos ao TechSpeedUP de IIS-v2!</h1>
+    <h1>Bem Vindos ao TechSpeedUP de IIS!</h1>
     <p>Website provisionado com Terraform + Custom Script Extension</p>
 </body>
 </html>
@@ -67,8 +67,8 @@ New-WebVirtualDirectory -Site $siteName -Name $virtualDir -PhysicalPath $virtual
     <title>Virtual Dir</title>
 </head>
 <body>
-    <h1>Virtual Directory Funcionando!</h1>
-    <p>Conteudo servido a partir de: $virtualPath</p>
+    <h1>Diretorio Virtual Funcionando!</h1>
+    <p>Diretorio Virtual provisionado com Terraform</p>
 </body>
 </html>
 "@ | Out-File "$virtualPath\index.html" -Encoding utf8 -Force
