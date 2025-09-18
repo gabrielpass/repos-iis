@@ -93,10 +93,14 @@ if (Get-WebBinding -Name $siteName -Protocol "https" -ErrorAction SilentlyContin
 }
 New-WebBinding -Name $siteName -Protocol "https" -Port 443 -HostHeader $hostname
 
-# Associar certificado ao binding HTTPS
-$guid = [guid]::NewGuid().ToString()
-netsh http delete sslcert ipport=0.0.0.0:443 2>$null
-netsh http add sslcert ipport=0.0.0.0:443 certhash=$thumb appid="{$guid}"
+# Associar certificado ao binding corretamente
+$certHash = $cert.Thumbprint
+$binding = "IIS:\SslBindings\0.0.0.0!443!$hostname"
+
+if (Test-Path $binding) {
+    Remove-Item $binding -Force
+}
+New-Item $binding -Thumbprint $certHash -SSLFlags 1
 
 # Reiniciar IIS
 Restart-Service W3SVC -Force
