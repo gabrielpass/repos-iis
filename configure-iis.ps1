@@ -7,31 +7,34 @@ $appPoolName   = "TsuPool"
 $sitePath      = "C:\inetpub\wwwroot\techspeedup"
 $virtualDir    = "TsuDir"
 $virtualPath   = "C:\inetpub\wwwroot\techspeedup\tsudir"
-$hostname      = "tsusite.local"
-$certFriendly  = "IIS TechSpeedUp Cert"
+$hostname      = "tsusite.local"   # Ajuste conforme necessário
 
 # Criar pastas se não existirem
-if (!(Test-Path $sitePath)) { New-Item -Path $sitePath -ItemType Directory -Force | Out-Null }
-if (!(Test-Path $virtualPath)) { New-Item -Path $virtualPath -ItemType Directory -Force | Out-Null }
+if (!(Test-Path $sitePath)) {
+    New-Item -Path $sitePath -ItemType Directory -Force | Out-Null
+}
+if (!(Test-Path $virtualPath)) {
+    New-Item -Path $virtualPath -ItemType Directory -Force | Out-Null
+}
 
 # Importar módulo WebAdministration
 Import-Module WebAdministration
 
-# Forçar criação do App Pool
-if (Get-ChildItem IIS:\AppPools | Where-Object { $_.Name -eq $appPoolName }) {
+# App Pool
+if (Get-WebAppPoolState -Name $appPoolName -ErrorAction SilentlyContinue) {
     Remove-WebAppPool -Name $appPoolName -Confirm:$false
 }
 New-WebAppPool -Name $appPoolName
 Set-ItemProperty IIS:\AppPools\$appPoolName -Name managedRuntimeVersion -Value "v4.0"
 Set-ItemProperty IIS:\AppPools\$appPoolName -Name processModel.identityType -Value ApplicationPoolIdentity
 
-# Forçar criação do Website (apenas HTTP primeiro)
+# Website
 if (Get-Website | Where-Object { $_.Name -eq $siteName }) {
     Remove-Website -Name $siteName
 }
 New-Website -Name $siteName -PhysicalPath $sitePath -ApplicationPool $appPoolName -HostHeader $hostname -Port 80
 
-# Criar Virtual Directory
+# Virtual Directory
 if (Get-WebVirtualDirectory -Site $siteName -Name $virtualDir -ErrorAction SilentlyContinue) {
     Remove-WebVirtualDirectory -Site $siteName -Name $virtualDir -Confirm:$false
 }
@@ -70,41 +73,40 @@ New-WebVirtualDirectory -Site $siteName -Name $virtualDir -PhysicalPath $virtual
 </html>
 "@ | Out-File "$virtualPath\index.html" -Encoding utf8 -Force
 
-# ---------------------------
-# Criar certificado SSL confiável
-# ---------------------------
-$cert = New-SelfSignedCertificate `
-    -DnsName $hostname `
-    -CertStoreLocation "cert:\LocalMachine\My" `
-    -FriendlyName $certFriendly `
-    -NotAfter (Get-Date).AddYears(2)
+# --- CERTIFICADO ---
+# Remover certificado antigo com o mesmo CN
+$oldCerts = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.Subject -eq "CN=$hostname" }
+if ($oldCerts) {
+    foreach ($c in $oldCerts) {
+        Write-Output "Removendo certificado antigo: $($c.Thumbprint)"
+        Remove-Item -Path "Cert:\LocalMachine\My\$($c.Thumbprint)" -Force
+    }
+}
 
-# Copiar para Trusted Root
+# Criar novo certificado self-signed
+$cert = New-SelfSignedCertificate -DnsName $hostname -CertStoreLocation "Cert:\LocalMachine\My"
+
+# Adicionar certificado no Trusted Root (para evitar erro de confiança local)
 $rootStore = New-Object System.Security.Cryptography.X509Certificates.X509Store("Root","LocalMachine")
 $rootStore.Open("ReadWrite")
 $rootStore.Add($cert)
 $rootStore.Close()
 
-# ---------------------------
-# Configurar binding HTTPS no IIS
-# ---------------------------
+# --- BINDING HTTPS ---
+# Remove binding antigo se existir
 if (Get-WebBinding -Name $siteName -Protocol "https" -ErrorAction SilentlyContinue) {
     Remove-WebBinding -Name $siteName -Protocol "https"
 }
 New-WebBinding -Name $siteName -Protocol "https" -Port 443 -HostHeader $hostname
 
-# Associar certificado ao binding corretamente
-$certHash = $cert.Thumbprint
+# Associar certificado ao binding no IIS
 $binding = "IIS:\SslBindings\0.0.0.0!443!$hostname"
-
 if (Test-Path $binding) {
     Remove-Item $binding -Force
 }
-New-Item $binding -Thumbprint $certHash -SSLFlags 1
+New-Item $binding -Thumbprint $cert.Thumbprint -SSLFlags 1
 
 # Reiniciar IIS
 Restart-Service W3SVC -Force
 
-Write-Output "IIS configurado com sucesso."
-Write-Output "HTTP:  http://$hostname/"
-Write-Output "HTTPS: https://$hostname/"
+Write-Output "IIS configurado com sucesso. Site disponível em: https://$hostname/"
