@@ -7,6 +7,7 @@ $appPoolName   = "TsuPool"
 $sitePath      = "C:\inetpub\wwwroot\techspeedup"
 $virtualDir    = "TsuDir"
 $virtualPath   = "C:\inetpub\wwwroot\techspeedup\tsudir"
+$hostname      = "tsusite.local"   # Ajuste para o host desejado (ex: tsusite.seudominio.com)
 
 # Criar pastas se não existirem
 if (!(Test-Path $sitePath)) {
@@ -32,7 +33,7 @@ Set-ItemProperty IIS:\AppPools\$appPoolName -Name processModel.identityType -Val
 if (Get-Website | Where-Object { $_.Name -eq $siteName }) {
     Remove-Website -Name $siteName
 }
-New-Website -Name $siteName -Port 80 -PhysicalPath $sitePath -ApplicationPool $appPoolName
+New-Website -Name $siteName -PhysicalPath $sitePath -ApplicationPool $appPoolName -HostHeader $hostname -Port 80
 
 # Criar Virtual Directory (sobrescreve se existir)
 if (Get-WebVirtualDirectory -Site $siteName -Name $virtualDir -ErrorAction SilentlyContinue) {
@@ -76,4 +77,4 @@ New-WebVirtualDirectory -Site $siteName -Name $virtualDir -PhysicalPath $virtual
 # Reiniciar IIS para garantir que alterações sejam aplicadas
 Restart-Service W3SVC -Force
 
-Write-Output "IIS configurado com sucesso. Site: http://localhost/"
+Write-Output "IIS configurado com sucesso. Site disponível em: http://$hostname/"
