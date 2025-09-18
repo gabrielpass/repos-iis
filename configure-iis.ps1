@@ -7,15 +7,12 @@ $appPoolName   = "TsuPool"
 $sitePath      = "C:\inetpub\wwwroot\techspeedup"
 $virtualDir    = "TsuDir"
 $virtualPath   = "C:\inetpub\wwwroot\techspeedup\tsudir"
-$hostname      = "tsusite.local"   # Ajuste para o host desejado (ex: tsusite.seudominio.com)
+$hostname      = "tsusite.local"
+$certFriendly  = "IIS TechSpeedUp Cert"
 
 # Criar pastas se não existirem
-if (!(Test-Path $sitePath)) {
-    New-Item -Path $sitePath -ItemType Directory -Force | Out-Null
-}
-if (!(Test-Path $virtualPath)) {
-    New-Item -Path $virtualPath -ItemType Directory -Force | Out-Null
-}
+if (!(Test-Path $sitePath)) { New-Item -Path $sitePath -ItemType Directory -Force | Out-Null }
+if (!(Test-Path $virtualPath)) { New-Item -Path $virtualPath -ItemType Directory -Force | Out-Null }
 
 # Importar módulo WebAdministration
 Import-Module WebAdministration
@@ -28,13 +25,13 @@ New-WebAppPool -Name $appPoolName
 Set-ItemProperty IIS:\AppPools\$appPoolName -Name managedRuntimeVersion -Value "v4.0"
 Set-ItemProperty IIS:\AppPools\$appPoolName -Name processModel.identityType -Value ApplicationPoolIdentity
 
-# Forçar criação do Website
+# Forçar criação do Website (apenas HTTP primeiro)
 if (Get-Website | Where-Object { $_.Name -eq $siteName }) {
     Remove-Website -Name $siteName
 }
 New-Website -Name $siteName -PhysicalPath $sitePath -ApplicationPool $appPoolName -HostHeader $hostname -Port 80
 
-# Criar Virtual Directory (sobrescreve se existir)
+# Criar Virtual Directory
 if (Get-WebVirtualDirectory -Site $siteName -Name $virtualDir -ErrorAction SilentlyContinue) {
     Remove-WebVirtualDirectory -Site $siteName -Name $virtualDir -Confirm:$false
 }
@@ -73,21 +70,37 @@ New-WebVirtualDirectory -Site $siteName -Name $virtualDir -PhysicalPath $virtual
 </html>
 "@ | Out-File "$virtualPath\index.html" -Encoding utf8 -Force
 
-# Criar certificado self-signed
-$cert = New-SelfSignedCertificate -DnsName $hostname -CertStoreLocation "Cert:\LocalMachine\My"
-$thumb = $cert.Thumbprint
+# ---------------------------
+# Criar certificado SSL confiável
+# ---------------------------
+$cert = New-SelfSignedCertificate `
+    -DnsName $hostname `
+    -CertStoreLocation "cert:\LocalMachine\My" `
+    -FriendlyName $certFriendly `
+    -NotAfter (Get-Date).AddYears(2)
 
-# Adicionar binding HTTPS na porta 443
-if (!(Get-WebBinding -Name $siteName -Protocol "https" -ErrorAction SilentlyContinue)) {
-    New-WebBinding -Name $siteName -Protocol https -Port 443 -HostHeader $hostname
+# Copiar para Trusted Root
+$rootStore = New-Object System.Security.Cryptography.X509Certificates.X509Store("Root","LocalMachine")
+$rootStore.Open("ReadWrite")
+$rootStore.Add($cert)
+$rootStore.Close()
+
+# ---------------------------
+# Configurar binding HTTPS no IIS
+# ---------------------------
+if (Get-WebBinding -Name $siteName -Protocol "https" -ErrorAction SilentlyContinue) {
+    Remove-WebBinding -Name $siteName -Protocol "https"
 }
+New-WebBinding -Name $siteName -Protocol "https" -Port 443 -HostHeader $hostname
 
-# Associar certificado ao binding HTTPS
-$guid = [guid]::NewGuid().ToString()
-netsh http delete sslcert ipport=0.0.0.0:443 2>$null
-netsh http add sslcert ipport=0.0.0.0:443 certhash=$thumb appid="{$guid}"
+# Associar certificado ao binding
+$certHash = $cert.Thumbprint
+$guid = [guid]::NewGuid().ToString("B")
+netsh http add sslcert hostnameport="$hostname:443" certhash=$certHash appid="$guid"
 
-# Reiniciar IIS para garantir que alterações sejam aplicadas
+# Reiniciar IIS
 Restart-Service W3SVC -Force
 
-Write-Output "IIS configurado com sucesso. Site disponível em: http://$hostname/ e https://$hostname/"
+Write-Output "IIS configurado com sucesso."
+Write-Output "HTTP:  http://$hostname/"
+Write-Output "HTTPS: https://$hostname/"
