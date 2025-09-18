@@ -1,29 +1,26 @@
-# =========================
-# Variáveis do site
-# =========================
+# Instalar IIS
+Install-WindowsFeature -Name Web-Server -IncludeManagementTools
+
+# Variáveis
 $siteName      = "TsuSite"
 $appPoolName   = "TsuPool"
 $sitePath      = "C:\inetpub\wwwroot\techspeedup"
 $virtualDir    = "TsuDir"
 $virtualPath   = "C:\inetpub\wwwroot\techspeedup\tsudir"
-$hostname      = "tsusite.local"
-$certFriendly  = "IIS TechSpeedUp Cert"
-
-# =========================
-# Instalar IIS
-# =========================
-Install-WindowsFeature -Name Web-Server -IncludeManagementTools | Out-Null
+$hostname      = "tsusite.local"   # Ajuste para o host desejado (ex: tsusite.seudominio.com)
 
 # Criar pastas se não existirem
-if (!(Test-Path $sitePath)) { New-Item -Path $sitePath -ItemType Directory -Force | Out-Null }
-if (!(Test-Path $virtualPath)) { New-Item -Path $virtualPath -ItemType Directory -Force | Out-Null }
+if (!(Test-Path $sitePath)) {
+    New-Item -Path $sitePath -ItemType Directory -Force | Out-Null
+}
+if (!(Test-Path $virtualPath)) {
+    New-Item -Path $virtualPath -ItemType Directory -Force | Out-Null
+}
 
 # Importar módulo WebAdministration
 Import-Module WebAdministration
 
-# =========================
-# App Pool
-# =========================
+# Forçar criação do App Pool
 if (Get-ChildItem IIS:\AppPools | Where-Object { $_.Name -eq $appPoolName }) {
     Remove-WebAppPool -Name $appPoolName -Confirm:$false
 }
@@ -31,38 +28,38 @@ New-WebAppPool -Name $appPoolName
 Set-ItemProperty IIS:\AppPools\$appPoolName -Name managedRuntimeVersion -Value "v4.0"
 Set-ItemProperty IIS:\AppPools\$appPoolName -Name processModel.identityType -Value ApplicationPoolIdentity
 
-# =========================
-# Criar Site HTTP (80) se não existir
-# =========================
+# Forçar criação do Website
 if (Get-Website | Where-Object { $_.Name -eq $siteName }) {
     Remove-Website -Name $siteName
 }
-New-Website -Name $siteName -PhysicalPath $sitePath -ApplicationPool $appPoolName -Port 80 -HostHeader $hostname
+New-Website -Name $siteName -PhysicalPath $sitePath -ApplicationPool $appPoolName -HostHeader $hostname -Port 80
 
-# =========================
-# Criar Virtual Directory
-# =========================
+# Criar Virtual Directory (sobrescreve se existir)
 if (Get-WebVirtualDirectory -Site $siteName -Name $virtualDir -ErrorAction SilentlyContinue) {
     Remove-WebVirtualDirectory -Site $siteName -Name $virtualDir -Confirm:$false
 }
 New-WebVirtualDirectory -Site $siteName -Name $virtualDir -PhysicalPath $virtualPath -ApplicationPool $appPoolName
 
-# =========================
-# Criar páginas HTML
-# =========================
+# Criar página HTML principal
 @"
 <!DOCTYPE html>
 <html>
 <head>
-    <title>TechSpeedUP IIS</title>
+    <title>TechSpeedUP de IIS</title>
+    <style>
+        body { font-family: Arial; background-color: #f0f0f0; text-align: center; padding-top: 50px; }
+        h1 { color: #0078D7; }
+        p { font-size: 18px; }
+    </style>
 </head>
 <body>
-    <h1>Bem Vindos ao TechSpeedUP IIS!</h1>
-    <p>Site provisionado via Terraform + PowerShell</p>
+    <h1>Bem Vindos ao TechSpeedUP de IIS!</h1>
+    <p>Website provisionado com Terraform + Custom Script Extension</p>
 </body>
 </html>
 "@ | Out-File "$sitePath\index.html" -Encoding utf8 -Force
 
+# Criar página HTML no Virtual Directory
 @"
 <!DOCTYPE html>
 <html>
@@ -70,62 +67,27 @@ New-WebVirtualDirectory -Site $siteName -Name $virtualDir -PhysicalPath $virtual
     <title>Virtual Dir</title>
 </head>
 <body>
-    <h1>Diretório Virtual Funcionando!</h1>
-    <p>Conteúdo: $virtualPath</p>
+    <h1>Diretorio Virtual Funcionando!</h1>
+    <p>Diretorio Virtual provisionado com Terraform</p>
 </body>
 </html>
 "@ | Out-File "$virtualPath\index.html" -Encoding utf8 -Force
 
-# =========================
-# Certificado SSL (Self-Signed)
-# =========================
-# Remover certificado antigo
-$oldCerts = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.FriendlyName -eq $certFriendly }
-if ($oldCerts) { $oldCerts | ForEach-Object { Remove-Item "Cert:\LocalMachine\My\$($_.Thumbprint)" -Force } }
+# Criar certificado self-signed
+$cert = New-SelfSignedCertificate -DnsName $hostname -CertStoreLocation "Cert:\LocalMachine\My"
+$thumb = $cert.Thumbprint
 
-# Criar novo certificado self-signed
-$cert = New-SelfSignedCertificate -DnsName $hostname -CertStoreLocation "Cert:\LocalMachine\My" -FriendlyName $certFriendly
-
-# Adicionar ao Trusted Root
-$rootStore = New-Object System.Security.Cryptography.X509Certificates.X509Store("Root","LocalMachine")
-$rootStore.Open("ReadWrite")
-$rootStore.Add($cert)
-$rootStore.Close()
-
-# =========================
-# Binding HTTPS (443)
-# =========================
-$bindingExists = Get-WebBinding -Name $siteName -Protocol "https" -ErrorAction SilentlyContinue
-if ($bindingExists) { Remove-WebBinding -Name $siteName -Protocol "https" }
-New-WebBinding -Name $siteName -Protocol "https" -Port 443 -IPAddress "*" -HostHeader $hostname
-
-# Associar certificado
-$certThumb = $cert.Thumbprint
-$sslPath = "IIS:\SslBindings\0.0.0.0!443!$hostname"
-if (Test-Path $sslPath) { Remove-Item $sslPath -Force }
-New-Item -Path $sslPath -Thumbprint $certThumb -SSLFlags 1
-
-# =========================
-# Redirecionamento HTTP -> HTTPS via rewrite
-# =========================
-$rewriteModule = "C:\Windows\System32\inetsrv\rewrite\rewrite.dll"
-if (Test-Path $rewriteModule) {
-    $rulesPath = "IIS:\Sites\$siteName\system.webServer/rewrite/rules"
-    Remove-Item "$rulesPath/*" -Recurse -Force -ErrorAction SilentlyContinue
-    Add-WebConfiguration -PSPath "IIS:\Sites\$siteName" -Filter "system.webServer/rewrite/rules/rule[@name='RedirectToHttps']" -Value @{
-        name = "RedirectToHttps";
-        stopProcessing = "true";
-        match = @{url="(.*)"};
-        conditions = @{add = @{input="{HTTPS}"; pattern="off"}};
-        action = @{type="Redirect"; url="https://{HTTP_HOST}/{R:1}"; redirectType="Permanent"}
-    }
-} else {
-    Write-Warning "Url Rewrite module não encontrado. HTTP -> HTTPS não será configurado."
+# Adicionar binding HTTPS na porta 443
+if (!(Get-WebBinding -Name $siteName -Protocol "https" -ErrorAction SilentlyContinue)) {
+    New-WebBinding -Name $siteName -Protocol https -Port 443 -HostHeader $hostname
 }
 
-# =========================
-# Reiniciar IIS
-# =========================
+# Associar certificado ao binding HTTPS
+$guid = [guid]::NewGuid().ToString()
+netsh http delete sslcert ipport=0.0.0.0:443 2>$null
+netsh http add sslcert ipport=0.0.0.0:443 certhash=$thumb appid="{$guid}"
+
+# Reiniciar IIS para garantir que alterações sejam aplicadas
 Restart-Service W3SVC -Force
 
-Write-Output "IIS configurado com sucesso. Site HTTP/HTTPS pronto com certificado '$certFriendly'"
+Write-Output "IIS configurado com sucesso. Site disponível em: http://$hostname/ e https://$hostname/"
