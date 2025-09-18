@@ -13,7 +13,6 @@ $hostname      = "tsusite.local"   # Ajuste para o host desejado (ex: tsusite.se
 if (!(Test-Path $sitePath)) {
     New-Item -Path $sitePath -ItemType Directory -Force | Out-Null
 }
-
 if (!(Test-Path $virtualPath)) {
     New-Item -Path $virtualPath -ItemType Directory -Force | Out-Null
 }
@@ -74,7 +73,24 @@ New-WebVirtualDirectory -Site $siteName -Name $virtualDir -PhysicalPath $virtual
 </html>
 "@ | Out-File "$virtualPath\index.html" -Encoding utf8 -Force
 
+# Criar certificado self-signed(autoassinado) válido para tsusite.local
+$cert = New-SelfSignedCertificate -DnsName $hostname -CertStoreLocation "Cert:\LocalMachine\My"
+
+# Obter o thumbprint do certificado
+$thumb = $cert.Thumbprint
+
+# Adicionar binding HTTPS na porta 443
+if (!(Get-WebBinding -Name $siteName -Protocol "https" -ErrorAction SilentlyContinue)) {
+    New-WebBinding -Name $siteName -Protocol https -Port 443 -HostHeader $hostname
+}
+
+# Associar certificado ao binding HTTPS
+$guid = [guid]::NewGuid().ToString()
+netsh http delete sslcert ipport=0.0.0.0:443 2>$null
+netsh http add sslcert ipport=0.0.0.0:443 certhash=$thumb appid="{$guid}"
+
 # Reiniciar IIS para garantir que alterações sejam aplicadas
 Restart-Service W3SVC -Force
 
-Write-Output "IIS configurado com sucesso. Site disponível em: http://$hostname/"
+Write-Output "IIS configurado com sucesso. Site disponível em: http://$hostname/ e https://$hostname/"
+
