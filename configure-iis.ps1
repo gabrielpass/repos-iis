@@ -8,6 +8,7 @@ $sitePath      = "C:\inetpub\wwwroot\techspeedup"
 $virtualDir    = "TsuDir"
 $virtualPath   = "C:\inetpub\wwwroot\techspeedup\tsudir"
 $hostname      = "tsusite.local"   # Ajuste conforme necessário
+$certFriendly  = "IIS TechSpeedUp Cert"
 
 # Criar pastas se não existirem
 if (!(Test-Path $sitePath)) {
@@ -74,8 +75,8 @@ New-WebVirtualDirectory -Site $siteName -Name $virtualDir -PhysicalPath $virtual
 "@ | Out-File "$virtualPath\index.html" -Encoding utf8 -Force
 
 # --- CERTIFICADO ---
-# Remover certificado antigo com o mesmo CN
-$oldCerts = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.Subject -eq "CN=$hostname" }
+# Remover certificado antigo com mesmo FriendlyName
+$oldCerts = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.FriendlyName -eq $certFriendly }
 if ($oldCerts) {
     foreach ($c in $oldCerts) {
         Write-Output "Removendo certificado antigo: $($c.Thumbprint)"
@@ -84,7 +85,7 @@ if ($oldCerts) {
 }
 
 # Criar novo certificado self-signed
-$cert = New-SelfSignedCertificate -DnsName $hostname -CertStoreLocation "Cert:\LocalMachine\My"
+$cert = New-SelfSignedCertificate -DnsName $hostname -CertStoreLocation "Cert:\LocalMachine\My" -FriendlyName $certFriendly
 
 # Adicionar certificado no Trusted Root (para evitar erro de confiança local)
 $rootStore = New-Object System.Security.Cryptography.X509Certificates.X509Store("Root","LocalMachine")
@@ -92,14 +93,19 @@ $rootStore.Open("ReadWrite")
 $rootStore.Add($cert)
 $rootStore.Close()
 
-# --- BINDING HTTPS ---
-# Remove binding antigo se existir
+# --- BINDINGS ---
+# Garantir que binding HTTP existe
+if (-not (Get-WebBinding -Name $siteName -Protocol "http" -ErrorAction SilentlyContinue)) {
+    New-WebBinding -Name $siteName -Protocol "http" -Port 80 -HostHeader $hostname
+}
+
+# Garantir que binding HTTPS existe (remove antes para recriar)
 if (Get-WebBinding -Name $siteName -Protocol "https" -ErrorAction SilentlyContinue) {
     Remove-WebBinding -Name $siteName -Protocol "https"
 }
 New-WebBinding -Name $siteName -Protocol "https" -Port 443 -HostHeader $hostname
 
-# Associar certificado ao binding no IIS
+# Associar certificado ao binding HTTPS
 $binding = "IIS:\SslBindings\0.0.0.0!443!$hostname"
 if (Test-Path $binding) {
     Remove-Item $binding -Force
@@ -109,4 +115,4 @@ New-Item $binding -Thumbprint $cert.Thumbprint -SSLFlags 1
 # Reiniciar IIS
 Restart-Service W3SVC -Force
 
-Write-Output "IIS configurado com sucesso. Site disponível em: https://$hostname/"
+Write-Output "IIS configurado com sucesso. Site disponível em: http://$hostname/ e https://$hostname/"
