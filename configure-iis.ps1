@@ -9,14 +9,13 @@ $virtualDir    = "TsuDir"
 $virtualPath   = "C:\inetpub\wwwroot\techspeedup\tsudir"
 $hostname      = "tsusite.local"   # Ajuste para o host desejado (ex: tsusite.seudominio.com)
 $certFriendly  = "IIS TechSpeedUp Cert"
+$tempPath      = "C:\inetpub\temp"
+$certFile      = "$tempPath\tsucert.cer"
 
 # Criar pastas se não existirem
-if (!(Test-Path $sitePath)) {
-    New-Item -Path $sitePath -ItemType Directory -Force | Out-Null
-}
-if (!(Test-Path $virtualPath)) {
-    New-Item -Path $virtualPath -ItemType Directory -Force | Out-Null
-}
+if (!(Test-Path $sitePath)) { New-Item -Path $sitePath -ItemType Directory -Force | Out-Null }
+if (!(Test-Path $virtualPath)) { New-Item -Path $virtualPath -ItemType Directory -Force | Out-Null }
+if (!(Test-Path $tempPath)) { New-Item -Path $tempPath -ItemType Directory -Force | Out-Null }
 
 # Importar módulo WebAdministration
 Import-Module WebAdministration
@@ -35,13 +34,13 @@ if (Get-Website | Where-Object { $_.Name -eq $siteName }) {
 }
 New-Website -Name $siteName -PhysicalPath $sitePath -ApplicationPool $appPoolName -HostHeader $hostname -Port 80
 
-# Criar Virtual Directory (sobrescreve se existir)
+# Criar Virtual Directory
 if (Get-WebVirtualDirectory -Site $siteName -Name $virtualDir -ErrorAction SilentlyContinue) {
     Remove-WebVirtualDirectory -Site $siteName -Name $virtualDir -Confirm:$false
 }
 New-WebVirtualDirectory -Site $siteName -Name $virtualDir -PhysicalPath $virtualPath -ApplicationPool $appPoolName
 
-# Criar página HTML principal
+# Criar páginas HTML
 @"
 <!DOCTYPE html>
 <html>
@@ -60,7 +59,6 @@ New-WebVirtualDirectory -Site $siteName -Name $virtualDir -PhysicalPath $virtual
 </html>
 "@ | Out-File "$sitePath\index.html" -Encoding utf8 -Force
 
-# Criar página HTML no Virtual Directory
 @"
 <!DOCTYPE html>
 <html>
@@ -78,21 +76,24 @@ New-WebVirtualDirectory -Site $siteName -Name $virtualDir -PhysicalPath $virtual
 $cert = New-SelfSignedCertificate -DnsName $hostname -CertStoreLocation "Cert:\LocalMachine\My" -FriendlyName $certFriendly
 $thumb = $cert.Thumbprint
 
-
 # Adicionar binding HTTPS na porta 443
 if (!(Get-WebBinding -Name $siteName -Protocol "https" -ErrorAction SilentlyContinue)) {
     New-WebBinding -Name $siteName -Protocol https -Port 443 -HostHeader $hostname
 }
 
-Export-Certificate -FilePath "C:\inetpub\temp\tsucert.cer" -Cert 'cert:\localmachine\my\' + $thumb
-Import-Certificate -FilePath "C:\inetpub\temp\tsucert.cer" -CertStoreLocation "Cert:\LocalMachine\Root"
+# Exportar certificado para a pasta temp
+$certObj = Get-Item "Cert:\LocalMachine\My\$thumb"
+Export-Certificate -Cert $certObj -FilePath $certFile -Force | Out-Null
+
+# Importar certificado para Trusted Root Certification Authorities
+Import-Certificate -FilePath $certFile -CertStoreLocation "Cert:\LocalMachine\Root" | Out-Null
 
 # Associar certificado ao binding HTTPS
 $guid = [guid]::NewGuid().ToString()
 netsh http delete sslcert ipport=0.0.0.0:443 2>$null
 netsh http add sslcert ipport=0.0.0.0:443 certhash=$thumb appid="{$guid}"
 
-# Reiniciar IIS para garantir que alterações sejam aplicadas
+# Reiniciar IIS
 Restart-Service W3SVC -Force
 
-Write-Output "IIS configurado com sucesso. Site disponível em: http://$hostname/ e https://$hostname/"
+Write-Output "IIS configurado com sucesso. Certificado exportado para Trusted Root. Site disponível em: http://$hostname/ e https://$hostname/"
