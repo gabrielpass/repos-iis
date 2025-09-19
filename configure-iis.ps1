@@ -7,7 +7,7 @@ $appPoolName   = "TsuPool"
 $sitePath      = "C:\inetpub\wwwroot\techspeedup"
 $virtualDir    = "TsuDir"
 $virtualPath   = "C:\inetpub\wwwroot\techspeedup\tsudir"
-$hostname      = "tsusite.local"   # Ajuste para o host desejado (ex: tsusite.seudominio.com)
+$hostname      = "tsusite.local"   # Ajuste para o host desejado
 $certFriendly  = "IIS TechSpeedUp Cert"
 $tempPath      = "C:\inetpub\temp"
 $certFile      = "$tempPath\tsucert.cer"
@@ -103,7 +103,19 @@ $certObj = Get-Item "Cert:\LocalMachine\My\$thumb"
 Export-Certificate -Cert $certObj -FilePath $certFile -Force | Out-Null
 
 # Importar certificado para Trusted Root Certification Authorities
-Import-Certificate -FilePath $certFile -CertStoreLocation "Cert:\LocalMachine\Root" | Out-Null
+$rootImported = Import-Certificate -FilePath $certFile -CertStoreLocation "Cert:\LocalMachine\Root"
+
+# Ajustar FriendlyName também no Root
+if ($rootImported) {
+    foreach ($c in $rootImported) {
+        try {
+            $c.FriendlyName = $certFriendly
+            Write-Host "FriendlyName atualizado para '$certFriendly' em Cert:\LocalMachine\Root" -ForegroundColor Green
+        } catch {
+            Write-Warning "Não foi possível atualizar o FriendlyName no Root."
+        }
+    }
+}
 
 # Associar certificado ao binding HTTPS
 $guid = [guid]::NewGuid().ToString()
@@ -113,4 +125,4 @@ netsh http add sslcert ipport=0.0.0.0:443 certhash=$thumb appid="{$guid}"
 # Reiniciar IIS
 Restart-Service W3SVC -Force
 
-Write-Output "IIS configurado com sucesso. Certificado '$certFriendly' exportado para Trusted Root. Site disponível em: http://$hostname/ e https://$hostname/"
+Write-Output "IIS configurado com sucesso. Certificado '$certFriendly' exportado para Trusted Root com FriendlyName. Site disponível em: http://$hostname/ e https://$hostname/"
