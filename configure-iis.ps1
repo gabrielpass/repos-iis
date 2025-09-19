@@ -11,6 +11,7 @@ $hostname      = "tsusite.local"   # Ajuste para o host desejado (ex: tsusite.se
 $certFriendly  = "IIS TechSpeedUp Cert"
 $tempPath      = "C:\inetpub\temp"
 $certFile      = "$tempPath\tsucert.cer"
+$certSubject   = "CN=$hostname"
 
 # Criar pastas se não existirem
 if (!(Test-Path $sitePath)) { New-Item -Path $sitePath -ItemType Directory -Force | Out-Null }
@@ -72,7 +73,23 @@ New-WebVirtualDirectory -Site $siteName -Name $virtualDir -PhysicalPath $virtual
 </html>
 "@ | Out-File "$virtualPath\index.html" -Encoding utf8 -Force
 
-# Criar certificado self-signed
+# --- REMOVER certificados antigos (My e Root) pelo Subject ---
+$stores = @(
+    "Cert:\LocalMachine\My",   
+    "Cert:\LocalMachine\Root"
+)
+
+foreach ($store in $stores) {
+    $certs = Get-ChildItem -Path $store -ErrorAction SilentlyContinue | Where-Object { $_.Subject -eq $certSubject }
+    if ($certs) {
+        foreach ($cert in $certs) {
+            Write-Host "Removendo certificado existente:" $cert.Subject "de $store" -ForegroundColor Yellow
+            Remove-Item -Path $cert.PSPath -Force
+        }
+    }
+}
+
+# Criar novo certificado self-signed
 $cert = New-SelfSignedCertificate -DnsName $hostname -CertStoreLocation "Cert:\LocalMachine\My" -FriendlyName $certFriendly
 $thumb = $cert.Thumbprint
 
@@ -96,4 +113,4 @@ netsh http add sslcert ipport=0.0.0.0:443 certhash=$thumb appid="{$guid}"
 # Reiniciar IIS
 Restart-Service W3SVC -Force
 
-Write-Output "IIS configurado com sucesso. Certificado exportado para Trusted Root. Site disponível em: http://$hostname/ e https://$hostname/"
+Write-Output "IIS configurado com sucesso. Certificado '$certFriendly' exportado para Trusted Root. Site disponível em: http://$hostname/ e https://$hostname/"
