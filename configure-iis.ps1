@@ -8,6 +8,7 @@ $sitePath      = "C:\inetpub\wwwroot\techspeedup"
 $virtualDir    = "TsuDir"
 $virtualPath   = "C:\inetpub\wwwroot\techspeedup\tsudir"
 $hostname      = "tsusite.local"   # Ajuste para o host desejado (ex: tsusite.seudominio.com)
+$certFriendly  = "IIS TechSpeedUp Cert"
 
 # Criar pastas se não existirem
 if (!(Test-Path $sitePath)) {
@@ -74,13 +75,17 @@ New-WebVirtualDirectory -Site $siteName -Name $virtualDir -PhysicalPath $virtual
 "@ | Out-File "$virtualPath\index.html" -Encoding utf8 -Force
 
 # Criar certificado self-signed
-$cert = New-SelfSignedCertificate -DnsName $hostname -CertStoreLocation "Cert:\LocalMachine\My"
+$cert = New-SelfSignedCertificate -DnsName $hostname -CertStoreLocation "Cert:\LocalMachine\My" -FriendlyName $certFriendly
 $thumb = $cert.Thumbprint
+
 
 # Adicionar binding HTTPS na porta 443
 if (!(Get-WebBinding -Name $siteName -Protocol "https" -ErrorAction SilentlyContinue)) {
     New-WebBinding -Name $siteName -Protocol https -Port 443 -HostHeader $hostname
 }
+
+Export-Certificate -FilePath "C:\inetpub\temp\tsucert.cer" -Cert 'cert:\localmachine\my\' + $thumb
+Import-Certificate -FilePath "C:\inetpub\temp\tsucert.cer" -CertStoreLocation "Cert:\LocalMachine\Root"
 
 # Associar certificado ao binding HTTPS
 $guid = [guid]::NewGuid().ToString()
